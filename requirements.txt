@@ -4,4 +4,3 @@ pymongo==4.6.1
 braintree==4.25.0
 dnspython==2.6.1
 flask==3.0.2
-hypercorn==0.16.0
