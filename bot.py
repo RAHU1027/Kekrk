@@ -1,5 +1,6 @@
 import os
 import time
+import asyncio
 import threading
 from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -7,19 +8,18 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Cont
 from pymongo import MongoClient
 from utils import get_bin_details, check_card_with_braintree
 
-# 1. Flask Web Server Logic (For Render Port Binding)
-app = Flask(__name__)
+# 1. Flask App Setup for Port Binding
+flask_app = Flask(__name__)
 
-@app.route('/')
-def home():
-    return "Bot is Live and Running 24/7!"
+@flask_app.route('/')
+def health_check():
+    return "Bot is alive and pinging!", 200
 
-def run_flask():
-    # Render automatically passes PORT environment variable
+def start_flask():
     port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)
+    flask_app.run(host="0.0.0.0", port=port)
 
-# 2. Telegram Bot Configuration
+# 2. Telegram Configurations
 TOKEN = "8625009320:AAHphrFrjdBRRYBhdEE73PwsOlQ_YI9JjYc"
 MONGO_URI = "mongodb+srv://Elevenyts:Elevenyts@cluster0.vuyc1u2.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
 
@@ -30,7 +30,7 @@ try:
 except Exception:
     users_collection = None
 
-# Core card processor function (Dono command aur button click ke liye common)
+# Card processing core helper
 async def process_card_check(card_string, user):
     start_time = time.time()
     try:
@@ -44,7 +44,6 @@ async def process_card_check(card_string, user):
         execution_time = round(time.time() - start_time, 2)
         user_mention = f"<a href='tg://user?id={user.id}'>{user.first_name}</a>"
         
-        # Aapka custom design layout
         designed_response = (
             f"↯  @kushal_99bot\n\n"
             f"• »  <b>Card</b> ⇾ <code>{card_num}|{month}|{year}|{cvv}</code>\n"
@@ -58,20 +57,17 @@ async def process_card_check(card_string, user):
             f"• »  <b>Time</b> ⇾ {execution_time}s"
         )
         
-        # Re-check inline button attach karna (Isse user click karke re-deploy check kar sakta hai)
         keyboard = [[InlineKeyboardButton("🔄 Re-Check Card", callback_data=f"recheck_{card_string}")]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        return designed_response, reply_markup
+        return designed_response, InlineKeyboardMarkup(keyboard)
     except Exception as e:
         return f"⚠️ <b>System Error:</b> {str(e)}", None
 
-# Commands
+# Handler definitions
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if users_collection:
         users_collection.update_one({"user_id": user.id}, {"$set": {"username": user.username, "first_name": user.first_name}}, upsert=True)
-    await update.message.reply_text(f"Welcome {user.first_name}! Use <code>/chk CC|MM|YY|CVV</code> to test cards.", parse_mode="HTML")
+    await update.message.reply_text(f"Welcome {user.first_name}! Use <code>/chk CC|MM|YY|CVV</code>", parse_mode="HTML")
 
 async def chk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -83,33 +79,39 @@ async def chk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     response_text, reply_markup = await process_card_check(context.args[0], user)
     await status_msg.edit_text(response_text, parse_mode="HTML", reply_markup=reply_markup)
 
-# Callback Handler for Re-checking Button
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user = query.from_user
-    await query.answer("Re-triggering Gateway Check...")
+    await query.answer("Re-checking...")
     
-    # Callback data se card nikalna
     if query.data.startswith("recheck_"):
         card_string = query.data.replace("recheck_", "")
-        await query.edit_message_text("<code>🔄 Re-deploying request... Fetching live status...</code>", parse_mode="HTML")
+        await query.edit_message_text("<code>🔄 Re-checking status from gateway...</code>", parse_mode="HTML")
         response_text, reply_markup = await process_card_check(card_string, user)
         await query.edit_message_text(response_text, parse_mode="HTML", reply_markup=reply_markup)
 
-def main():
-    # Run Flask in a separate thread for Render port survival
-    flask_thread = threading.Thread(target=run_flask)
-    flask_thread.daemon = True
-    flask_thread.start()
-
-    # Start Telegram Bot Polling
+async def run_bot():
     bot_app = Application.builder().token(TOKEN).build()
     bot_app.add_handler(CommandHandler("start", start))
     bot_app.add_handler(CommandHandler("chk", chk_command))
     bot_app.add_handler(CallbackQueryHandler(button_handler))
     
-    print("🚀 Web Server + Bot Application started successfully!")
-    bot_app.run_polling()
+    await bot_app.initialize()
+    await bot_app.start()
+    await bot_app.updater.start_polling(drop_pending_updates=True)
+    
+    # Keeping loop active without crashing web instance
+    while True:
+        await asyncio.sleep(3600)
 
 if __name__ == "__main__":
-    main()
+    # 1. Start Flask immediately so Render knows server is up and healthy
+    t = threading.Thread(target=start_flask)
+    t.daemon = True
+    t.start()
+    
+    # 2. Start Bot Client Loop
+    try:
+        asyncio.run(run_bot())
+    except (KeyboardInterrupt, SystemExit):
+        print("Bot Stopped Safely.")
