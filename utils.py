@@ -3,7 +3,6 @@ import random
 import requests
 import braintree
 
-# Braintree Gateway Setup
 gateway = braintree.BraintreeGateway(
     braintree.Configuration(
         braintree.Environment.Sandbox,
@@ -15,19 +14,14 @@ gateway = braintree.BraintreeGateway(
 
 def get_bin_details(card_num):
     clean_bin = str(card_num).strip()[:6]
-    default_info = {
-        "issuer": "N/A",
-        "info": "N/A - N/A - N/A",
-        "country": "N/A 🏳️"
-    }
+    default_info = {"issuer": "N/A", "info": "N/A - N/A - N/A", "country": "N/A 🏳️"}
     try:
-        response = requests.get(f"https://lookup.binlist.net/{clean_bin}", headers={'Accept-Version': '3'}, timeout=5)
+        response = requests.get(f"https://lookup.binlist.net/{clean_bin}", headers={'Accept-Version': '3'}, timeout=4)
         if response.status_code == 200:
             data = response.json()
             country_code = data.get('country', {}).get('alpha2', '')
             country_name = data.get('country', {}).get('name', 'N/A')
             flag = "".join(chr(127397 + ord(c)) for c in country_code.upper()) if country_code else ""
-            
             scheme = data.get('scheme', 'N/A').upper()
             card_type = data.get('type', 'N/A').upper()
             brand = data.get('brand', 'N/A').upper()
