@@ -1,6 +1,5 @@
 import os
 import time
-import asyncio
 import threading
 from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -8,29 +7,34 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Cont
 from pymongo import MongoClient
 from utils import get_bin_details, check_card_with_braintree
 
-# 1. Flask App Setup for Port Binding
+# 1. Flask App Setup (Render Ke Port Survival Ke Liye)
 flask_app = Flask(__name__)
 
 @flask_app.route('/')
 def health_check():
-    return "Bot is alive and pinging!", 200
+    return "Bot is running perfectly 24/7!", 200
 
 def start_flask():
+    # Render automatic Port variable provide karta hai
     port = int(os.environ.get("PORT", 5000))
     flask_app.run(host="0.0.0.0", port=port)
 
-# 2. Telegram Configurations
+# 2. Telegram Aur Database Configurations
 TOKEN = "8625009320:AAHphrFrjdBRRYBhdEE73PwsOlQ_YI9JjYc"
 MONGO_URI = "mongodb+srv://Elevenyts:Elevenyts@cluster0.vuyc1u2.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
 
 try:
-    client = MongoClient(MONGO_URI)
+    client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
     db = client['tg_bot_db']
     users_collection = db['users']
-except Exception:
+    # Trigger a quick connection test
+    client.server_info()
+    print("✅ MongoDB Connected Successfully!")
+except Exception as e:
+    print(f"⚠️ MongoDB Connection Alert (Skipping): {e}")
     users_collection = None
 
-# Card processing core helper
+# Core card processor function
 async def process_card_check(card_string, user):
     start_time = time.time()
     try:
@@ -44,6 +48,7 @@ async def process_card_check(card_string, user):
         execution_time = round(time.time() - start_time, 2)
         user_mention = f"<a href='tg://user?id={user.id}'>{user.first_name}</a>"
         
+        # Custom Design Layout
         designed_response = (
             f"↯  @kushal_99bot\n\n"
             f"• »  <b>Card</b> ⇾ <code>{card_num}|{month}|{year}|{cvv}</code>\n"
@@ -66,8 +71,11 @@ async def process_card_check(card_string, user):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if users_collection:
-        users_collection.update_one({"user_id": user.id}, {"$set": {"username": user.username, "first_name": user.first_name}}, upsert=True)
-    await update.message.reply_text(f"Welcome {user.first_name}! Use <code>/chk CC|MM|YY|CVV</code>", parse_mode="HTML")
+        try:
+            users_collection.update_one({"user_id": user.id}, {"$set": {"username": user.username, "first_name": user.first_name}}, upsert=True)
+        except Exception:
+            pass
+    await update.message.reply_text(f"Welcome {user.first_name}! Use <code>/chk CC|MM|YY|CVV</code> to test cards.", parse_mode="HTML")
 
 async def chk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -90,28 +98,19 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         response_text, reply_markup = await process_card_check(card_string, user)
         await query.edit_message_text(response_text, parse_mode="HTML", reply_markup=reply_markup)
 
-async def run_bot():
+if __name__ == "__main__":
+    # 1. Sabse pehle Flask server ko background thread me chalayein 
+    # Taaki Render ko turant 'Port Binding' mil jaye aur Status 1 na aaye.
+    flask_thread = threading.Thread(target=start_flask)
+    flask_thread.daemon = True
+    flask_thread.start()
+    print("✨ Web server thread pushed successfully.")
+
+    # 2. Main Thread me Telegram Bot standard polling start karein
     bot_app = Application.builder().token(TOKEN).build()
     bot_app.add_handler(CommandHandler("start", start))
     bot_app.add_handler(CommandHandler("chk", chk_command))
     bot_app.add_handler(CallbackQueryHandler(button_handler))
     
-    await bot_app.initialize()
-    await bot_app.start()
-    await bot_app.updater.start_polling(drop_pending_updates=True)
-    
-    # Keeping loop active without crashing web instance
-    while True:
-        await asyncio.sleep(3600)
-
-if __name__ == "__main__":
-    # 1. Start Flask immediately so Render knows server is up and healthy
-    t = threading.Thread(target=start_flask)
-    t.daemon = True
-    t.start()
-    
-    # 2. Start Bot Client Loop
-    try:
-        asyncio.run(run_bot())
-    except (KeyboardInterrupt, SystemExit):
-        print("Bot Stopped Safely.")
+    print("🚀 Bot Application starting polling mode...")
+    bot_app.run_polling(drop_pending_updates=True)
